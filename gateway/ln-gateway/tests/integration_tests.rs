@@ -4,13 +4,20 @@
 //! and business logic.
 mod fixtures;
 
+use std::sync::Arc;
+
+use anyhow::bail;
 use fedimint_core::config::FederationId;
 use fedimint_core::Amount;
 use fedimint_dummy_client::DummyClientExt;
+use fedimint_testing::btc::BitcoinTest;
 use fedimint_testing::federation::FederationTest;
+use fedimint_testing::fixtures::TIMEOUT;
 use fedimint_testing::gateway::GatewayTest;
+use fedimint_wallet_client::{DepositState, WalletClientExt};
+use futures::StreamExt;
 use ln_gateway::rpc::rpc_client::GatewayRpcClient;
-use ln_gateway::rpc::{BalancePayload, ConnectFedPayload};
+use ln_gateway::rpc::{BalancePayload, ConnectFedPayload, WithdrawPayload};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn gatewayd_supports_connecting_multiple_federations() {
@@ -85,17 +92,47 @@ async fn gatewayd_shows_balance_for_any_connected_federation() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn gatewayd_allows_deposit_to_any_connected_federation() -> anyhow::Result<()> {
-    // todo: implement test case
+async fn gatewayd_allows_deposit_to_any_connected_federation() {
+    let (gateway, rpc, fed1, fed2, bitcoin) = fixtures::fixtures().await;
 
-    Ok(())
+    let id1 = fed1.connection_code().id;
+    let id2 = fed2.connection_code().id;
+
+    connect_federations(&rpc, &[fed1, fed2]).await.unwrap();
+
+    bitcoin.prepare_funding_wallet().await;
+
+    deposit_and_wait_for_confirmation(&gateway, bitcoin.clone(), id1, 5_000_000)
+        .await
+        .unwrap();
+    deposit_and_wait_for_confirmation(&gateway, bitcoin.clone(), id2, 1_000_000)
+        .await
+        .unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn gatewayd_allows_withdrawal_from_any_connected_federation() -> anyhow::Result<()> {
-    // todo: implement test case
+async fn gatewayd_allows_withdrawal_from_any_connected_federation() {
+    let (gateway, rpc, fed1, fed2, bitcoin) = fixtures::fixtures().await;
 
-    Ok(())
+    let id1 = fed1.connection_code().id;
+    let id2 = fed2.connection_code().id;
+
+    connect_federations(&rpc, &[fed1, fed2]).await.unwrap();
+
+    bitcoin.prepare_funding_wallet().await;
+    deposit_and_wait_for_confirmation(&gateway, bitcoin.clone(), id1, 5_000_000)
+        .await
+        .unwrap();
+    deposit_and_wait_for_confirmation(&gateway, bitcoin.clone(), id2, 5_000_000)
+        .await
+        .unwrap();
+
+    let address = bitcoin.get_new_address().await;
+
+    withdraw(&rpc, id1, address.clone(), 1_000_000)
+        .await
+        .unwrap();
+    withdraw(&rpc, id2, address, 2_000_000).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -175,4 +212,54 @@ async fn send_msats_to_gateway(gateway: &GatewayTest, id: FederationId, msats: u
     let client = gateway.select_client(id).await;
     let (_, outpoint) = client.print_money(Amount::from_msats(msats)).await.unwrap();
     client.receive_money(outpoint).await.unwrap();
+}
+
+async fn deposit_and_wait_for_confirmation(
+    gateway: &GatewayTest,
+    bitcoin: Arc<dyn BitcoinTest>,
+    id: FederationId,
+    sats: u64,
+) -> anyhow::Result<()> {
+    let valid_until = std::time::SystemTime::now() + TIMEOUT;
+    let finality_delay = 10;
+
+    let client = gateway.select_client(id).await;
+    let (op, address) = client.get_deposit_address(valid_until).await.unwrap();
+    let mut stream = client
+        .subscribe_deposit_updates(op)
+        .await
+        .unwrap()
+        .into_stream();
+
+    bitcoin
+        .send_and_mine_block(&address, bitcoin::Amount::from_sat(sats))
+        .await;
+
+    while let Some(state) = stream.next().await {
+        match state {
+            DepositState::Failed(e) => {
+                bail!("failed to receive deposit: {}", e)
+            }
+            DepositState::Confirmed => break,
+            _ => bitcoin.mine_blocks(finality_delay).await,
+        }
+    }
+
+    Ok(())
+}
+
+async fn withdraw(
+    rpc: &GatewayRpcClient,
+    id: FederationId,
+    address: bitcoin::Address,
+    sats: u64,
+) -> anyhow::Result<()> {
+    rpc.withdraw(WithdrawPayload {
+        federation_id: id,
+        amount: bitcoin::Amount::from_sat(sats),
+        address,
+    })
+    .await?;
+
+    Ok(())
 }

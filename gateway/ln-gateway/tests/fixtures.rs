@@ -10,6 +10,9 @@ use fedimint_testing::btc::BitcoinTest;
 use fedimint_testing::federation::FederationTest;
 use fedimint_testing::fixtures::Fixtures;
 use fedimint_testing::gateway::GatewayTest;
+use fedimint_wallet_client::config::WalletGenParams;
+use fedimint_wallet_client::WalletClientGen;
+use fedimint_wallet_server::WalletGen;
 use ln_gateway::rpc::rpc_client::GatewayRpcClient;
 
 /// Constructs a gateway connected to 2 federations for RPC tests
@@ -23,6 +26,10 @@ pub async fn fixtures() -> (
     let mut fixtures = Fixtures::new_primary(DummyClientGen, DummyGen, DummyGenParams::default());
     let ln_params = LightningGenParams::regtest(fixtures.bitcoin_server());
     fixtures = fixtures.with_module(LightningClientGen, LightningGen, ln_params);
+
+    let wallet_params = WalletGenParams::regtest(fixtures.bitcoin_server());
+    let wallet_client = WalletClientGen::new(fixtures.bitcoin_client());
+    fixtures = fixtures.with_module(wallet_client, WalletGen, wallet_params);
 
     let lnd = fixtures.lnd().await;
     let gateway = fixtures.new_gateway(lnd).await;

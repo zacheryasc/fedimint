@@ -3191,6 +3191,7 @@ dependencies = [
  "fedimint-rocksdb",
  "fedimint-testing",
  "fedimint-wallet-client",
+ "fedimint-wallet-server",
  "futures",
  "lightning",
  "lightning-invoice",
