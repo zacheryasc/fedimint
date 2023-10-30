@@ -294,6 +294,13 @@ impl Federation {
         Ok(())
     }
 
+    pub async fn get_peer(&self, peer_id: usize) -> Result<Fedimintd> {
+        self.members
+            .get(&peer_id)
+            .ok_or_else(|| anyhow!("Could not fetch peer {peer_id} from the federation"))
+            .map(|f| f.clone())
+    }
+
     pub async fn use_gateway(&self, gw: &super::Gatewayd) -> Result<()> {
         let gateway_id = gw.gateway_id().await?;
         cmd!(self, "switch-gateway", gateway_id.clone())

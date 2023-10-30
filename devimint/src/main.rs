@@ -676,6 +676,17 @@ async fn cli_tests(dev_fed: DevFed) -> Result<()> {
     Ok(())
 }
 
+async fn double_spend_test(dev_fed: DevFed) -> Result<()> {
+    let data_dir = env::var("FM_DATA_DIR")?;
+
+    let DevFed { fed, .. } = dev_fed;
+
+    let mint1 = fed.get_peer(0).await?;
+    let mint2 = fed.get_peer(1).await?;
+
+    Ok(())
+}
+
 async fn cli_load_test_tool_test(dev_fed: DevFed) -> Result<()> {
     let data_dir = env::var("FM_DATA_DIR")?;
     let load_test_temp = PathBuf::from(data_dir).join("load-test-temp");
@@ -1144,6 +1155,8 @@ enum Cmd {
     ReconnectTest,
     /// `devfed` then tests a bunch of the fedimint-cli commands
     CliTests,
+    /// `devfed` then attempts to double spend
+    DoubleSpendTest,
     /// `devfed` then calls binary `fedimint-load-test-tool`. See
     /// `LoadTestArgs`.
     LoadTestToolTest,
@@ -1370,6 +1383,11 @@ async fn handle_command() -> Result<()> {
             let (process_mgr, _) = setup(args.common).await?;
             let dev_fed = dev_fed(&process_mgr).await?;
             cli_tests(dev_fed).await?;
+        }
+        Cmd::DoubleSpendTest => {
+            let (process_mgr, _) = setup(args.common).await?;
+            let dev_fed = dev_fed(&process_mgr).await?;
+            double_spend_test(dev_fed).await?;
         }
         Cmd::LoadTestToolTest => {
             let (process_mgr, _) = setup(args.common).await?;
