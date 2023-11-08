@@ -977,6 +977,7 @@ dependencies = [
  "fedimint-core",
  "fedimint-logging",
  "fedimint-portalloc",
+ "fedimint-rocksdb",
  "fedimint-server",
  "fedimint-testing",
  "fedimint-tonic-lnd",

@@ -6,6 +6,7 @@ use std::{env, fs};
 use anyhow::{anyhow, bail, Context, Result};
 use bitcoincore_rpc::bitcoin::Network;
 use bitcoincore_rpc::RpcApi;
+use fedimint_client::secret::{PlainRootSecretStrategy, RootSecretStrategy};
 use fedimint_core::admin_client::{
     ConfigGenConnectionsRequest, ConfigGenParamsRequest, WsAdminClient,
 };
@@ -23,7 +24,7 @@ use fedimint_wallet_client::config::WalletClientConfig;
 use fedimintd::attach_default_module_init_params;
 use fedimintd::fedimintd::FM_EXTRA_DKG_META_VAR;
 use futures::future::join_all;
-use rand::Rng;
+use rand::{thread_rng, Rng};
 use tracing::info;
 
 use super::external::Bitcoind;
@@ -82,6 +83,10 @@ impl Client {
             "fedimint-cli",
             format!("--data-dir={}", self.path.display())
         )
+    }
+
+    pub async fn into_dev_client(self) -> Result<DevClient> {
+        DevClient::new(self.path).await
     }
 }
 
@@ -319,6 +324,57 @@ impl Federation {
         Ok(cmd!(self, "info").out_json().await?["total_amount_msat"]
             .as_u64()
             .unwrap())
+    }
+}
+
+/// custom client instance for fine grained access to the runtime
+pub struct DevClient(fedimint_client::ClientArc);
+
+impl DevClient {
+    pub async fn new(path: PathBuf) -> Result<Self> {
+        let mut client_builder = Self::build_client_builder(path)?;
+
+        let client_secret = match client_builder
+            .load_decodable_client_secret::<[u8; 64]>()
+            .await
+        {
+            Ok(secret) => secret,
+            Err(_) => {
+                info!("Generating secret and writing to client storage");
+                let secret = PlainRootSecretStrategy::random(&mut thread_rng());
+                client_builder.store_encodable_client_secret(secret).await?;
+                secret
+            }
+        };
+        let client = client_builder
+            .build(PlainRootSecretStrategy::to_root_secret(&client_secret))
+            .await?;
+        Ok(Self(client))
+    }
+
+    fn build_client_builder(path: PathBuf) -> Result<fedimint_client::ClientBuilder> {
+        let module_inits = fedimint_cli::FedimintCli::new()?
+            .with_default_modules()
+            .get_module_inits()
+            .clone();
+        let db = Self::load_rocks_db(path)?;
+        let mut client_builder = fedimint_client::ClientBuilder::default();
+        client_builder.with_module_inits(module_inits);
+        client_builder.with_primary_module(1);
+        client_builder.with_database(db);
+
+        Ok(client_builder)
+    }
+
+    fn load_rocks_db(path: PathBuf) -> Result<fedimint_rocksdb::RocksDb> {
+        let db_path = path.join("client.db");
+
+        fedimint_rocksdb::RocksDb::open(db_path).map_err(|e| {
+            anyhow!(
+                "failed to load client db, client error: {}",
+                e.into_string()
+            )
+        })
     }
 }
 

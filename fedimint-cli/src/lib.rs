@@ -775,6 +775,10 @@ impl FedimintCli {
             }
         }
     }
+
+    pub fn get_module_inits(&self) -> &ClientModuleInitRegistry {
+        &self.module_inits
+    }
 }
 
 fn salt_from_file_path(file_path: &Path) -> PathBuf {
